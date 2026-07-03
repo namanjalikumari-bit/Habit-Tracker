@@ -9,6 +9,8 @@ import {
   YAxis,
 } from "recharts";
 
+import { useReducedMotion } from "@/hooks/use-reduced-motion";
+
 interface AreaLineChartProps {
   data: Array<Record<string, number>>;
   xKey: string;
@@ -21,9 +23,9 @@ interface AreaLineChartProps {
 
 /**
  * Smoothed area + line chart used for both "Habits Completed / Day" and
- * "Habits Completed in Month" (Master-Design-Spec §12.1/§12.2). Reference
- * behaviour is a static redraw on data change — animation is intentionally
- * disabled here; A7 is where motion is introduced.
+ * "Habits Completed in Month" (Master-Design-Spec §12.1/§12.2). A7 adds a
+ * subtle redraw animation on data change; it is disabled under
+ * prefers-reduced-motion. Colors, shape and layout are unchanged.
  */
 export function AreaLineChart({
   data,
@@ -34,6 +36,7 @@ export function AreaLineChart({
   xTicks,
   showDataLabels = false,
 }: AreaLineChartProps) {
+  const reducedMotion = useReducedMotion();
   return (
     <ResponsiveContainer width="100%" height={160}>
       <AreaChart
@@ -75,7 +78,9 @@ export function AreaLineChart({
                 }
               : false
           }
-          isAnimationActive={false}
+          isAnimationActive={!reducedMotion}
+          animationDuration={400}
+          animationEasing="ease-out"
         />
       </AreaChart>
     </ResponsiveContainer>

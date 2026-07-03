@@ -26,7 +26,11 @@ export function ProgressBar({ percent, className }: ProgressBarProps) {
       aria-label={`${clamped}% complete`}
     >
       <div
-        className={cn("h-5", isComplete ? "bg-success" : "bg-progress")}
+        className={cn(
+          "h-5",
+          isComplete ? "bg-success" : "bg-progress",
+          "motion-safe:transition-[width,background-color] motion-safe:duration-300 motion-safe:ease-out",
+        )}
         style={{ width: `${clamped}%` }}
       />
     </div>

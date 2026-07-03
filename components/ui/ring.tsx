@@ -57,6 +57,7 @@ export function Ring({
           strokeDasharray={`${progressLength} ${circumference - progressLength}`}
           strokeLinecap="butt"
           transform={`rotate(-90 ${center} ${center})`}
+          className="motion-safe:transition-[stroke-dasharray] motion-safe:duration-500 motion-safe:ease-out"
         />
       )}
     </svg>

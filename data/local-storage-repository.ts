@@ -1,7 +1,11 @@
 /**
- * localStorage implementation of the persistence seam (A1–A4). All access
- * is guarded for SSR (no `window`) and wrapped in try/catch so a full or
- * disabled storage never crashes the app.
+ * localStorage implementation of the persistence seam. As of A6 this is the
+ * FALLBACK (used when Supabase is not configured) and the MIGRATION SOURCE
+ * (existing local data is imported into the cloud on first login).
+ *
+ * All access is guarded for SSR (no `window`) and wrapped in try/catch so a
+ * full or disabled storage never crashes the app. The interface is async;
+ * these methods resolve immediately.
  */
 import {
   type HabitRepository,
@@ -12,7 +16,7 @@ import {
 const STORAGE_KEY = "smart-habit-tracker:v1";
 
 export class LocalStorageHabitRepository implements HabitRepository {
-  load(): PersistedState | null {
+  async load(): Promise<PersistedState | null> {
     if (typeof window === "undefined") return null;
     try {
       const raw = window.localStorage.getItem(STORAGE_KEY);
@@ -25,16 +29,16 @@ export class LocalStorageHabitRepository implements HabitRepository {
     }
   }
 
-  save(state: PersistedState): void {
+  async save(state: PersistedState): Promise<void> {
     if (typeof window === "undefined") return;
     try {
       window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     } catch {
-      // Storage full or unavailable — persistence is best-effort in A1–A4.
+      // Storage full or unavailable — persistence is best-effort.
     }
   }
 
-  clear(): void {
+  async clear(): Promise<void> {
     if (typeof window === "undefined") return;
     try {
       window.localStorage.removeItem(STORAGE_KEY);
@@ -44,5 +48,5 @@ export class LocalStorageHabitRepository implements HabitRepository {
   }
 }
 
-export const habitRepository: HabitRepository =
+export const localHabitRepository: HabitRepository =
   new LocalStorageHabitRepository();

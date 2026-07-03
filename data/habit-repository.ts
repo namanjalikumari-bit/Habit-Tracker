@@ -1,7 +1,12 @@
 /**
  * The single persistence seam (Architecture §1/§24). Components and the
- * store depend only on this interface — A6 swaps the localStorage
- * implementation for an API-backed one with no other changes.
+ * store depend only on this interface. As of A6 there are two
+ * implementations: LocalStorageHabitRepository (fallback / migration source)
+ * and SupabaseHabitRepository (cloud, per authenticated user).
+ *
+ * The interface is async: localStorage resolves immediately; Supabase does
+ * real network I/O. The store awaits these and drives optimistic UI + sync
+ * status around them.
  */
 import type { HabitMonth, SheetId } from "@/types/habit";
 
@@ -13,7 +18,7 @@ export interface PersistedState {
 }
 
 export interface HabitRepository {
-  load(): PersistedState | null;
-  save(state: PersistedState): void;
-  clear(): void;
+  load(): Promise<PersistedState | null>;
+  save(state: PersistedState): Promise<void>;
+  clear(): Promise<void>;
 }

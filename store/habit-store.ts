@@ -1,19 +1,29 @@
 /**
  * Zustand store (Architecture §6). Holds both sheets, exposes actions that
  * mutate immutably (so React.memo'd rows skip re-render), and persists
- * through the HabitRepository seam — never touching localStorage directly.
+ * through the HabitRepository seam — never touching a concrete backend.
  *
- * Initial state is the deterministic seed, so SSR and the first client
- * render match; `hydrateFromStorage()` runs on mount to pull any saved
- * data. Persistence is debounced and gated on `hydrated` so the seed can
- * never overwrite real saved data before it loads.
+ * A6 optimistic sync model:
+ *  - Every action mutates local state INSTANTLY (the UI updates immediately).
+ *  - Persistence is debounced and runs in the background through the active
+ *    repository (localStorage when not signed in / not configured; Supabase
+ *    when signed in — swapped via `setActiveRepository`).
+ *  - `syncStatus` / `syncError` surface a tiny status; a failed save keeps the
+ *    app fully usable and can be retried.
+ *
+ * Initial state is the deterministic seed, so SSR and the first client render
+ * match. The auth-aware sync controller (lib/sync/sync-controller.ts) chooses
+ * the repository and hydrates the store after login.
  */
 import { create } from "zustand";
 
-import { habitRepository } from "@/data/local-storage-repository";
-import { PERSIST_VERSION } from "@/data/habit-repository";
+import { PERSIST_VERSION, type HabitRepository } from "@/data/habit-repository";
+import { localHabitRepository } from "@/data/local-storage-repository";
+import { normalizeSheets } from "@/data/normalize";
 import { makeSeedSheets, SEED_TODAY } from "@/data/seed";
 import { clampYear, isValidMonth } from "@/domain/validation";
+import { newId } from "@/lib/id";
+import { friendlySyncError } from "@/lib/sync/messages";
 import {
   DAYS_PER_ROW,
   MAX_HABITS,
@@ -23,87 +33,59 @@ import {
   type Today,
 } from "@/types/habit";
 
+export type SyncStatus = "idle" | "saving" | "error";
+
 interface HabitStore {
   sheets: Record<SheetId, HabitMonth>;
   today: Today;
+  /** True once the store has been hydrated from the active repository. */
   hydrated: boolean;
+  /** Active persistence backend (local by default; Supabase after login). */
+  repository: HabitRepository;
+  syncStatus: SyncStatus;
+  syncError: string | null;
 
+  // Dashboard actions (unchanged signatures — the UI is untouched).
   setYear(sheet: SheetId, year: number): void;
   setMonth(sheet: SheetId, month: number): void;
   toggleDay(sheet: SheetId, habitId: string, dayIndex: number): void;
-  paintDay(
-    sheet: SheetId,
-    habitId: string,
-    dayIndex: number,
-    value: boolean,
-  ): void;
+  paintDay(sheet: SheetId, habitId: string, dayIndex: number, value: boolean): void;
   renameHabit(sheet: SheetId, habitId: string, name: string): void;
   addHabit(sheet: SheetId, name: string): void;
   removeHabit(sheet: SheetId, habitId: string): void;
   resetSheet(sheet: SheetId): void;
-  hydrateFromStorage(): void;
-}
 
-function newId(): string {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
-    return crypto.randomUUID();
-  }
-  return `h-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-}
-
-function withDaysLength(days: boolean[]): boolean[] {
-  if (days.length === DAYS_PER_ROW) return days;
-  const next = new Array(DAYS_PER_ROW).fill(false);
-  for (let i = 0; i < Math.min(days.length, DAYS_PER_ROW); i++) {
-    next[i] = Boolean(days[i]);
-  }
-  return next;
-}
-
-/** Best-effort normalisation of persisted data back into the model shape. */
-function normalizeSheets(
-  sheets: Record<SheetId, HabitMonth>,
-): Record<SheetId, HabitMonth> {
-  const seed = makeSeedSheets();
-  const ids: SheetId[] = ["example", "empty-template"];
-  const result = {} as Record<SheetId, HabitMonth>;
-  for (const id of ids) {
-    const stored = sheets?.[id];
-    if (
-      stored &&
-      typeof stored.year === "number" &&
-      isValidMonth(stored.month) &&
-      Array.isArray(stored.habits)
-    ) {
-      result[id] = {
-        year: clampYear(stored.year),
-        month: stored.month,
-        habits: stored.habits.slice(0, MAX_HABITS).map((h) => ({
-          id: typeof h.id === "string" ? h.id : newId(),
-          name: typeof h.name === "string" ? h.name : "",
-          days: withDaysLength(Array.isArray(h.days) ? h.days : []),
-        })),
-      };
-    } else {
-      result[id] = seed[id];
-    }
-  }
-  return result;
+  // Sync lifecycle (driven by the sync controller).
+  setActiveRepository(repository: HabitRepository): void;
+  beginHydration(): void;
+  applyHydratedState(sheets: Record<SheetId, HabitMonth>): void;
+  setSyncError(message: string): void;
+  clearSyncError(): void;
+  retrySync(): void;
 }
 
 export const useHabitStore = create<HabitStore>((set, get) => {
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const persistNow = async () => {
+    const state = get();
+    if (!state.hydrated) return;
+    set({ syncStatus: "saving", syncError: null });
+    try {
+      await state.repository.save({
+        version: PERSIST_VERSION,
+        sheets: state.sheets,
+      });
+      // Only settle to idle if no newer save/error superseded this one.
+      if (get().syncStatus === "saving") set({ syncStatus: "idle" });
+    } catch (error) {
+      set({ syncStatus: "error", syncError: friendlySyncError(error) });
+    }
+  };
+
   const schedulePersist = () => {
     if (saveTimer) clearTimeout(saveTimer);
-    saveTimer = setTimeout(() => {
-      const state = get();
-      if (state.hydrated) {
-        habitRepository.save({
-          version: PERSIST_VERSION,
-          sheets: state.sheets,
-        });
-      }
-    }, 200);
+    saveTimer = setTimeout(() => void persistNow(), 300);
   };
 
   const mutateSheet = (
@@ -129,14 +111,15 @@ export const useHabitStore = create<HabitStore>((set, get) => {
     sheets: makeSeedSheets(),
     today: SEED_TODAY,
     hydrated: false,
+    repository: localHabitRepository,
+    syncStatus: "idle",
+    syncError: null,
 
     setYear: (sheet, year) =>
       mutateSheet(sheet, (m) => ({ ...m, year: clampYear(year) })),
 
     setMonth: (sheet, month) =>
-      mutateSheet(sheet, (m) =>
-        isValidMonth(month) ? { ...m, month } : m,
-      ),
+      mutateSheet(sheet, (m) => (isValidMonth(month) ? { ...m, month } : m)),
 
     toggleDay: (sheet, habitId, dayIndex) =>
       mutateSheet(sheet, (m) =>
@@ -184,14 +167,18 @@ export const useHabitStore = create<HabitStore>((set, get) => {
       mutateSheet(sheet, () => seed[sheet]);
     },
 
-    hydrateFromStorage: () => {
-      if (get().hydrated) return;
-      const stored = habitRepository.load();
-      if (stored) {
-        set({ sheets: normalizeSheets(stored.sheets), hydrated: true });
-      } else {
-        set({ hydrated: true });
-      }
-    },
+    setActiveRepository: (repository) => set({ repository }),
+
+    beginHydration: () =>
+      set({ hydrated: false, syncStatus: "idle", syncError: null }),
+
+    applyHydratedState: (sheets) =>
+      set({ sheets: normalizeSheets(sheets), hydrated: true }),
+
+    setSyncError: (message) => set({ syncStatus: "error", syncError: message }),
+
+    clearSyncError: () => set({ syncStatus: "idle", syncError: null }),
+
+    retrySync: () => void persistNow(),
   };
 });

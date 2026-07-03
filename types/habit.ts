@@ -25,6 +25,9 @@ export interface HabitMonth {
 
 export type SheetId = "example" | "empty-template";
 
+/** The two sheets, in stable order. Used across the persistence layer. */
+export const SHEET_IDS: SheetId[] = ["example", "empty-template"];
+
 export interface Today {
   year: number;
   /** 1–12 */

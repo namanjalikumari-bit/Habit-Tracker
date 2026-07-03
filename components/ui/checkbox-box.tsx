@@ -37,7 +37,10 @@ export function CheckboxBox({ state, className }: CheckboxBoxProps) {
       )}
     >
       {isChecked && (
-        <Check className="h-3 w-3 stroke-[3] text-white" aria-hidden="true" />
+        <Check
+          className="motion-safe:animate-check-pop h-3 w-3 stroke-[3] text-white"
+          aria-hidden="true"
+        />
       )}
     </span>
   );
