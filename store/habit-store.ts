@@ -66,20 +66,34 @@ interface HabitStore {
 
 export const useHabitStore = create<HabitStore>((set, get) => {
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
+  // Serialize saves: a whole-state save is not safe to run concurrently
+  // (it deletes+reinserts rows). Only one runs at a time; if a change lands
+  // mid-save, we run exactly one more save afterwards with the latest state.
+  let saveInFlight = false;
+  let saveQueued = false;
 
   const persistNow = async () => {
-    const state = get();
-    if (!state.hydrated) return;
+    if (!get().hydrated) return;
+    if (saveInFlight) {
+      saveQueued = true;
+      return;
+    }
+    saveInFlight = true;
     set({ syncStatus: "saving", syncError: null });
     try {
-      await state.repository.save({
+      await get().repository.save({
         version: PERSIST_VERSION,
-        sheets: state.sheets,
+        sheets: get().sheets, // always persist the latest state
       });
-      // Only settle to idle if no newer save/error superseded this one.
       if (get().syncStatus === "saving") set({ syncStatus: "idle" });
     } catch (error) {
       set({ syncStatus: "error", syncError: friendlySyncError(error) });
+    } finally {
+      saveInFlight = false;
+      if (saveQueued) {
+        saveQueued = false;
+        void persistNow();
+      }
     }
   };
 

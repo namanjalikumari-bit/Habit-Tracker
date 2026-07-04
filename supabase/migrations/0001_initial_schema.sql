@@ -11,6 +11,10 @@
 --   habit_entries → one row per COMPLETED day (presence = checked)
 -- ============================================================================
 
+-- gen_random_uuid() ships with Postgres 13+ / Supabase; this is a harmless
+-- no-op safeguard in case pgcrypto is where it lives on your instance.
+create extension if not exists pgcrypto with schema extensions;
+
 -- ----------------------------------------------------------------------------
 -- profiles: one row per auth user (created automatically by a trigger below).
 -- ----------------------------------------------------------------------------
@@ -121,3 +125,15 @@ drop trigger if exists on_auth_user_created on auth.users;
 create trigger on_auth_user_created
   after insert on auth.users
   for each row execute function public.handle_new_user();
+
+-- ============================================================================
+-- Tell PostgREST to reload its schema cache, then prove the tables exist.
+-- The SELECT below should return exactly 4 rows — if it does, you're done.
+-- ============================================================================
+notify pgrst, 'reload schema';
+
+select table_name
+from information_schema.tables
+where table_schema = 'public'
+  and table_name in ('profiles', 'habit_months', 'habits', 'habit_entries')
+order by table_name;
