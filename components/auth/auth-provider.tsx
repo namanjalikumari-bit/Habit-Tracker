@@ -87,18 +87,36 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signIn = async (email: string, password: string): Promise<AuthResult> => {
     if (!client) return { error: AUTH_NOT_CONFIGURED_MESSAGE };
-    const { error } = await client.auth.signInWithPassword({ email, password });
-    if (!error) show("Signed in. Welcome back!", "success");
-    return { error: error ? friendlyAuthError(error.message) : null };
+    try {
+      const { error } = await client.auth.signInWithPassword({ email, password });
+      if (error) return { error: friendlyAuthError(error) };
+      show("Signed in. Welcome back!", "success");
+      return { error: null };
+    } catch (err) {
+      // Thrown (e.g. network) errors — surface a friendly reason, never crash.
+      return { error: friendlyAuthError(err) };
+    }
   };
 
   const signUp = async (email: string, password: string): Promise<AuthResult> => {
     if (!client) return { error: AUTH_NOT_CONFIGURED_MESSAGE };
-    const { data, error } = await client.auth.signUp({ email, password });
-    if (error) return { error: friendlyAuthError(error.message) };
-    // If the project requires email confirmation there is no active session yet.
-    if (data.session) show("Account created. You're all set!", "success");
-    return { error: null, needsEmailConfirmation: !data.session };
+    try {
+      const { data, error } = await client.auth.signUp({ email, password });
+      if (error) return { error: friendlyAuthError(error) };
+      // Some Supabase configs return a user with no identities for an existing
+      // email (to prevent enumeration) instead of an error — treat as "exists".
+      if (data.user && (data.user.identities?.length ?? 0) === 0 && !data.session) {
+        return {
+          error:
+            "An account with this email already exists — try signing in instead.",
+        };
+      }
+      // If the project requires email confirmation there is no active session yet.
+      if (data.session) show("Account created. You're all set!", "success");
+      return { error: null, needsEmailConfirmation: !data.session };
+    } catch (err) {
+      return { error: friendlyAuthError(err) };
+    }
   };
 
   const signOut = async () => {

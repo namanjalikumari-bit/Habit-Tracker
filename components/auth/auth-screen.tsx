@@ -40,22 +40,29 @@ export function AuthScreen() {
       return setError("Your password needs to be at least 6 characters.");
 
     setSubmitting(true);
-    const result =
-      mode === "signin"
-        ? await signIn(email.trim(), password)
-        : await signUp(email.trim(), password);
-    setSubmitting(false);
+    try {
+      const result =
+        mode === "signin"
+          ? await signIn(email.trim(), password)
+          : await signUp(email.trim(), password);
 
-    if (result.error) {
-      setError(result.error);
-      return;
+      if (result.error) {
+        setError(result.error);
+        return;
+      }
+      if (result.needsEmailConfirmation) {
+        setInfo(
+          "Almost there! Check your email to confirm your account, then sign in.",
+        );
+        setMode("signin");
+        setPassword("");
+      }
+      // On success with a session, AuthProvider flips to the dashboard.
+    } catch {
+      setError("Something went wrong. Please try again.");
+    } finally {
+      setSubmitting(false);
     }
-    if (result.needsEmailConfirmation) {
-      setInfo("Almost there! Check your email to confirm your account, then sign in.");
-      setMode("signin");
-      setPassword("");
-    }
-    // On success with a session, AuthProvider flips to the dashboard automatically.
   };
 
   const inputClass =
